@@ -1,0 +1,43 @@
+{
+  "name": "academic-resource-sharing-hub",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "server": "node server/index.js",
+    "seed": "node server/seed.js",
+    "test:auth": "node server/test-auth.js",
+    "test:student": "node server/test-student.js",
+    "test:faculty": "node server/test-faculty.js",
+    "test:phase4": "node server/test-phase4.js",
+    "test": "node server/test-phase4.js",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "bcryptjs": "^3.0.3",
+    "clsx": "^2.1.1",
+    "cors": "^2.8.6",
+    "dotenv": "^18.0.10",
+    "express": "^5.3.0",
+    "framer-motion": "^11.11.17",
+    "jsonwebtoken": "^9.0.3",
+    "lucide-react": "^0.460.0",
+    "multer": "^2.5.0",
+    "mysql2": "^3.24.6",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-router-dom": "^7.18.5",
+    "tailwind-merge": "^2.5.4"
+  },
+  "devDependencies": {
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "@vitejs/plugin-react": "^4.3.3",
+    "autoprefixer": "^10.4.20",
+    "postcss": "^8.4.49",
+    "tailwindcss": "^3.4.15",
+    "vite": "^5.4.11"
+  }
+}

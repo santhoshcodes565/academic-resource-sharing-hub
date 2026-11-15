@@ -29,7 +29,10 @@ export const fallbackStore = {
   resource_downloads: [],
   resource_requests: [],
   resource_reviews: [],
-  academic_years: []
+  academic_years: [],
+  authorized_faculty_emails: [],
+  faculty_verifications: [],
+  notifications: []
 };
 
 // Initial Seed Fixtures
@@ -541,11 +544,61 @@ async function seedDefaultFallbackData() {
       user_id: 'fac-001',
       staff_id: 'fac-001',
       review_status: 'PUBLISHED',
+      action: 'PUBLISHED',
+      previous_status: 'VERIFIED',
+      new_status: 'PUBLISHED',
       remarks: 'Published to general institutional student catalog.',
       rating: null,
       review_text: null,
       created_at: new Date('2025-02-10T11:00:00Z').toISOString(),
       updated_at: new Date('2025-02-10T11:00:00Z').toISOString()
+    }
+  ];
+
+  // 2. Pre-authorized Faculty Email Allowlist Fixtures
+  fallbackStore.authorized_faculty_emails = [
+    { id: 'afe-001', email: 'dr.morales@university.edu', department: 'Computer Science', designation: 'Associate Professor', is_registered: 1, created_at: new Date('2025-01-01T00:00:00Z').toISOString() },
+    { id: 'afe-002', email: 'prof.patel@university.edu', department: 'Electrical Engineering', designation: 'Professor & Chair', is_registered: 0, created_at: new Date('2025-01-01T00:00:00Z').toISOString() },
+    { id: 'afe-003', email: 'dr.connor@university.edu', department: 'Mechanical Engineering', designation: 'Assistant Professor', is_registered: 0, created_at: new Date('2025-01-01T00:00:00Z').toISOString() },
+    { id: 'afe-004', email: 'prof.turing@university.edu', department: 'Computer Science', designation: 'Distinguished Professor', is_registered: 0, created_at: new Date('2025-01-01T00:00:00Z').toISOString() },
+    { id: 'afe-005', email: 'dr.hopper@university.edu', department: 'Computer Science', designation: 'Professor', is_registered: 0, created_at: new Date('2025-01-01T00:00:00Z').toISOString() },
+    { id: 'afe-006', email: 'dr.feynman@university.edu', department: 'Physics', designation: 'Professor', is_registered: 0, created_at: new Date('2025-01-01T00:00:00Z').toISOString() },
+    { id: 'afe-007', email: 'prof.gauss@university.edu', department: 'Mathematics', designation: 'Professor & Chair', is_registered: 0, created_at: new Date('2025-01-01T00:00:00Z').toISOString() }
+  ];
+
+  fallbackStore.faculty_verifications = [];
+
+  // 3. Initial Seed Notifications
+  fallbackStore.notifications = [
+    {
+      id: 'notif-001',
+      user_id: 'stu-001',
+      title: 'Resource Contribution Verified',
+      message: 'Your submission "MATH250: Linear Algebra Eigenvalues & Diagonalization Study Guide" has been verified by Dr. Evelyn Morales.',
+      type: 'STATUS_CHANGE',
+      link: '/student/contributions',
+      is_read: 0,
+      created_at: new Date(Date.now() - 3600000 * 2).toISOString()
+    },
+    {
+      id: 'notif-002',
+      user_id: 'stu-001',
+      title: 'Resource Request Update',
+      message: 'Your resource request for "Distributed Systems 2024 End-Semester Solved Question Paper" is now IN PROGRESS.',
+      type: 'REQUEST',
+      link: '/student/requests',
+      is_read: 1,
+      created_at: new Date(Date.now() - 3600000 * 24).toISOString()
+    },
+    {
+      id: 'notif-003',
+      user_id: 'fac-001',
+      title: 'New Student Submission for Review',
+      message: 'Alex Chen submitted "CS401: Raft Consensus Algorithm Step-by-Step Visualization Notes" for verification.',
+      type: 'SUBMISSION',
+      link: '/faculty/verification',
+      is_read: 0,
+      created_at: new Date(Date.now() - 3600000 * 4).toISOString()
     }
   ];
 }
@@ -757,6 +810,9 @@ export async function initDatabase() {
         remarks TEXT NULL,
         rating INT NULL,
         review_text TEXT NULL,
+        action VARCHAR(50) NULL DEFAULT 'REVIEW',
+        previous_status VARCHAR(50) NULL DEFAULT NULL,
+        new_status VARCHAR(50) NULL DEFAULT 'UNDER REVIEW',
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
         FOREIGN KEY (resource_id) REFERENCES resources(id) ON DELETE CASCADE,
@@ -765,6 +821,79 @@ export async function initDatabase() {
         INDEX idx_reviews_staff (staff_id)
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
     `);
+
+    // Ensure columns exist if table was already created
+    try {
+      await pool.query(`ALTER TABLE resource_reviews ADD COLUMN action VARCHAR(50) NULL DEFAULT 'REVIEW'`);
+    } catch (e) {}
+    try {
+      await pool.query(`ALTER TABLE resource_reviews ADD COLUMN previous_status VARCHAR(50) NULL DEFAULT NULL`);
+    } catch (e) {}
+    try {
+      await pool.query(`ALTER TABLE resource_reviews ADD COLUMN new_status VARCHAR(50) NULL DEFAULT 'UNDER REVIEW'`);
+    } catch (e) {}
+
+    // 12. Authorized Faculty Emails Allowlist
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS authorized_faculty_emails (
+        id VARCHAR(36) PRIMARY KEY,
+        email VARCHAR(255) NOT NULL UNIQUE,
+        department VARCHAR(100) NOT NULL,
+        designation VARCHAR(100) DEFAULT 'Faculty Member',
+        is_registered BOOLEAN NOT NULL DEFAULT FALSE,
+        added_by VARCHAR(36) NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        INDEX idx_auth_faculty_email (email)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+    `);
+
+    // 13. Faculty Verification Tokens
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS faculty_verifications (
+        id VARCHAR(36) PRIMARY KEY,
+        email VARCHAR(255) NOT NULL,
+        token_hash VARCHAR(255) NOT NULL,
+        expires_at TIMESTAMP NOT NULL,
+        used BOOLEAN NOT NULL DEFAULT FALSE,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        INDEX idx_faculty_verif_token (token_hash),
+        INDEX idx_faculty_verif_email (email)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+    `);
+
+    // 14. Notifications Table
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS notifications (
+        id VARCHAR(36) PRIMARY KEY,
+        user_id VARCHAR(36) NOT NULL,
+        title VARCHAR(255) NOT NULL,
+        message TEXT NOT NULL,
+        type VARCHAR(50) NOT NULL DEFAULT 'INFO',
+        link VARCHAR(255) NULL,
+        is_read BOOLEAN NOT NULL DEFAULT FALSE,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+        INDEX idx_notifications_user_read (user_id, is_read),
+        INDEX idx_notifications_created (created_at)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+    `);
+
+    // Seed authorized faculty emails if empty
+    const [authFacultyRows] = await pool.query('SELECT COUNT(*) as count FROM authorized_faculty_emails');
+    if (authFacultyRows[0].count === 0) {
+      const SEED_FACULTY_EMAILS = [
+        ['afe-001', 'dr.morales@university.edu', 'Computer Science', 'Associate Professor', 1],
+        ['afe-002', 'prof.patel@university.edu', 'Electrical Engineering', 'Professor & Chair', 0],
+        ['afe-003', 'dr.connor@university.edu', 'Mechanical Engineering', 'Assistant Professor', 0],
+        ['afe-004', 'prof.turing@university.edu', 'Computer Science', 'Distinguished Professor', 0],
+        ['afe-005', 'dr.hopper@university.edu', 'Computer Science', 'Professor', 0],
+        ['afe-006', 'dr.feynman@university.edu', 'Physics', 'Professor', 0],
+        ['afe-007', 'prof.gauss@university.edu', 'Mathematics', 'Professor & Chair', 0]
+      ];
+      for (const f of SEED_FACULTY_EMAILS) {
+        await pool.query('INSERT IGNORE INTO authorized_faculty_emails (id, email, department, designation, is_registered) VALUES (?, ?, ?, ?, ?)', f);
+      }
+    }
 
     // Seed departments if empty
     const [deptRows] = await pool.query('SELECT COUNT(*) as count FROM departments');
@@ -1279,6 +1408,7 @@ export const db = {
     status = 'PENDING' // Students always enter PENDING
   }) {
     const id = crypto.randomUUID();
+    const initialRemarks = 'Initial contribution submitted for academic verification.';
 
     if (!useFallback && pool) {
       await pool.query(`
@@ -1292,6 +1422,30 @@ export const db = {
         academic_year, parseInt(year) || 1, semester, file_url, file_name, file_size, file_mime,
         uploader_id, status
       ]);
+
+      // Record initial verification history entry (Append-only)
+      const reviewId = `rev-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
+      await pool.query(`
+        INSERT INTO resource_reviews (id, resource_id, staff_id, user_id, review_status, action, previous_status, new_status, remarks, created_at)
+        VALUES (?, ?, NULL, ?, 'PENDING', 'SUBMITTED', NULL, 'PENDING', ?, CURRENT_TIMESTAMP)
+      `, [reviewId, id, uploader_id, initialRemarks]);
+
+      // Emit student notification
+      await this.createNotification({
+        user_id: uploader_id,
+        title: 'Resource Contribution Submitted',
+        message: `Your resource contribution "${title}" was successfully submitted and is PENDING faculty review.`,
+        type: 'SUBMISSION',
+        link: '/student/contributions'
+      });
+
+      // Emit faculty group notification
+      await this.notifyFacultyGroup({
+        title: 'New Student Contribution Pending Review',
+        message: `A new student resource "${title}" has been submitted for verification.`,
+        type: 'SUBMISSION',
+        link: '/faculty/verification'
+      });
 
       return this.getResourceById(id, uploader_id);
     } else {
@@ -1319,6 +1473,42 @@ export const db = {
         updated_at: new Date().toISOString()
       };
       fallbackStore.resources.unshift(newResource);
+
+      // Record initial verification history entry (Append-only)
+      const reviewId = `rev-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
+      fallbackStore.resource_reviews.unshift({
+        id: reviewId,
+        resource_id: id,
+        staff_id: null,
+        user_id: uploader_id,
+        review_status: 'PENDING',
+        action: 'SUBMITTED',
+        previous_status: null,
+        new_status: 'PENDING',
+        remarks: initialRemarks,
+        rating: null,
+        review_text: null,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString()
+      });
+
+      // Emit student notification
+      await this.createNotification({
+        user_id: uploader_id,
+        title: 'Resource Contribution Submitted',
+        message: `Your resource contribution "${title}" was successfully submitted and is PENDING faculty review.`,
+        type: 'SUBMISSION',
+        link: '/student/contributions'
+      });
+
+      // Emit faculty group notification
+      await this.notifyFacultyGroup({
+        title: 'New Student Contribution Pending Review',
+        message: `A new student resource "${title}" has been submitted for verification.`,
+        type: 'SUBMISSION',
+        link: '/faculty/verification'
+      });
+
       return this.getResourceById(id, uploader_id);
     }
   },
@@ -1525,6 +1715,13 @@ export const db = {
         VALUES (?, ?, ?, ?, ?, ?, 'PENDING')
       `, [id, user_id, department_id, subject_id, title, description]);
 
+      await this.notifyFacultyGroup({
+        title: 'New Student Resource Request',
+        message: `A new resource request "${title}" has been submitted for faculty and peer fulfillment.`,
+        type: 'REQUEST',
+        link: '/faculty/requests'
+      });
+
       const [rows] = await pool.query(`
         SELECT rq.*, d.name as department_name, s.name as subject_name, s.code as subject_code
         FROM resource_requests rq
@@ -1555,6 +1752,14 @@ export const db = {
         subject_code: subj.code || 'SUBJ'
       };
       fallbackStore.resource_requests.unshift(newReq);
+
+      await this.notifyFacultyGroup({
+        title: 'New Student Resource Request',
+        message: `A new resource request "${title}" has been submitted for faculty and peer fulfillment.`,
+        type: 'REQUEST',
+        link: '/faculty/requests'
+      });
+
       return newReq;
     }
   },
@@ -3111,18 +3316,28 @@ export const db = {
         WHERE id = ?
       `, [normStatus, cleanRemarks || existing.staff_remarks, verifiedBy, verifiedAt, resourceId]);
 
-      // 4. Record entry in resource_reviews
+      // 4. Record entry in resource_reviews (Append-only review history)
       const reviewId = `rev-${Date.now()}-${crypto.randomBytes(4).toString('hex')}`;
       await pool.query(`
-        INSERT INTO resource_reviews (id, resource_id, staff_id, user_id, review_status, remarks, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-      `, [reviewId, resourceId, staffId, staffId, normStatus, cleanRemarks || `Status marked as ${normStatus}`]);
+        INSERT INTO resource_reviews (id, resource_id, staff_id, user_id, review_status, action, previous_status, new_status, remarks, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+      `, [reviewId, resourceId, staffId, staffId, normStatus, normStatus, existing.status, normStatus, cleanRemarks || `Status marked as ${normStatus}`]);
 
       // 5. Audit log
       await pool.query(`
         INSERT INTO audit_logs (id, user_id, action, status, details, created_at)
         VALUES (?, ?, 'FACULTY_VERIFY_RESOURCE', 'SUCCESS', ?, CURRENT_TIMESTAMP)
       `, [`aud-${Date.now()}`, staffId, `Updated resource ${resourceId} status to ${normStatus}. Remarks: ${cleanRemarks}`]);
+
+      // 6. Emit real-time notification to student contributor
+      const notifType = normStatus === 'REJECTED' ? 'REJECTION' : (normStatus === 'PUBLISHED' ? 'PUBLICATION' : 'STATUS_CHANGE');
+      await this.createNotification({
+        user_id: existing.uploader_id,
+        title: `Resource Review: ${normStatus}`,
+        message: `Your contribution "${existing.title}" has been updated to "${normStatus}".${cleanRemarks ? ` Faculty Remarks: "${cleanRemarks}"` : ''}`,
+        type: notifType,
+        link: '/student/contributions'
+      });
 
       return await this.getVerificationDetails(resourceId);
     } else {
@@ -3131,6 +3346,7 @@ export const db = {
         throw new Error('Resource not found.');
       }
 
+      const previousStatus = resource.status;
       const isDecision = ['VERIFIED', 'REJECTED', 'PUBLISHED'].includes(normStatus);
       resource.status = normStatus;
       if (cleanRemarks) resource.staff_remarks = cleanRemarks;
@@ -3140,7 +3356,7 @@ export const db = {
       }
       resource.updated_at = now;
 
-      // Insert review history
+      // Insert review history (Append-only)
       const reviewId = `rev-${Date.now()}-${Math.random().toString(36).substr(2, 6)}`;
       fallbackStore.resource_reviews.unshift({
         id: reviewId,
@@ -3148,6 +3364,9 @@ export const db = {
         staff_id: staffId,
         user_id: staffId,
         review_status: normStatus,
+        action: normStatus,
+        previous_status: previousStatus,
+        new_status: normStatus,
         remarks: cleanRemarks || `Status updated to ${normStatus}`,
         rating: null,
         review_text: null,
@@ -3164,6 +3383,16 @@ export const db = {
         ip_address: '127.0.0.1',
         details: `Updated resource "${resource.title}" (${resourceId}) status to ${normStatus}. Remarks: ${cleanRemarks}`,
         created_at: now
+      });
+
+      // Emit real-time notification to student contributor
+      const notifType = normStatus === 'REJECTED' ? 'REJECTION' : (normStatus === 'PUBLISHED' ? 'PUBLICATION' : 'STATUS_CHANGE');
+      await this.createNotification({
+        user_id: resource.uploader_id,
+        title: `Resource Review: ${normStatus}`,
+        message: `Your contribution "${resource.title}" has been updated to "${normStatus}".${cleanRemarks ? ` Faculty Remarks: "${cleanRemarks}"` : ''}`,
+        type: notifType,
+        link: '/student/contributions'
       });
 
       return await this.getVerificationDetails(resourceId);
@@ -3460,6 +3689,15 @@ export const db = {
         VALUES (?, ?, 'FACULTY_UPDATE_REQUEST', 'SUCCESS', ?, CURRENT_TIMESTAMP)
       `, [`aud-${Date.now()}`, staffId, `Updated request ${requestId} status to ${normStatus}`]);
 
+      // Notify the student requester
+      await this.createNotification({
+        user_id: existing.user_id,
+        title: `Resource Request Status: ${normStatus}`,
+        message: `Your request "${existing.title}" is now "${normStatus}".${cleanRemarks ? ` Faculty Note: "${cleanRemarks}"` : ''}`,
+        type: 'REQUEST',
+        link: '/student/requests'
+      });
+
       return await this.getFacultyRequestById(requestId);
     } else {
       const req = fallbackStore.resource_requests.find(r => r.id === requestId);
@@ -3480,6 +3718,15 @@ export const db = {
         ip_address: '127.0.0.1',
         details: `Updated request "${req.title}" (${requestId}) status to ${normStatus}`,
         created_at: now
+      });
+
+      // Notify the student requester
+      await this.createNotification({
+        user_id: req.user_id,
+        title: `Resource Request Status: ${normStatus}`,
+        message: `Your request "${req.title}" is now "${normStatus}".${cleanRemarks ? ` Faculty Note: "${cleanRemarks}"` : ''}`,
+        type: 'REQUEST',
+        link: '/student/requests'
       });
 
       return await this.getFacultyRequestById(requestId);
